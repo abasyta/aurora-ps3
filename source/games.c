@@ -463,7 +463,7 @@ static int ini_get(const unsigned char *buf, unsigned int size,
 			if (strcmp(k, key) == 0) {
 				snprintf(out, outn, "%s", v);
 				free(copy);
-				return;
+				return 1;
 			}
 		}
 		if (!eol) break;

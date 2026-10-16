@@ -1,13 +1,12 @@
 # Builds aurora.pkg on GitHub's cloud. Triggered manually (API/UI).
-# Three parallel strategies; the first to succeed uploads the package.
-# Failures print the last 150 log lines into the run SUMMARY (publicly visible).
+# Failures print the last log lines into the run SUMMARY (publicly visible).
 name: Build Aurora PKG
 
 on:
   workflow_dispatch:
 
 jobs:
-  # ---------------- strategy 1: prebuilt toolchain image (fast) ----------------
+  # ---------------- fast path: prebuilt toolchain image ----------------
   try-hldtux:
     runs-on: ubuntu-latest
     timeout-minutes: 240
@@ -17,33 +16,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Locate toolchain in image
-        run: |
-          found=""
-          for d in "$PS3DEV" /usr/local/ps3dev /opt/ps3dev /ps3dev /usr/ps3dev /root/ps3dev /home/ps3dev; do
-            if [ -n "$d" ] && [ -x "$d/ppu/bin/ppu-gcc" ]; then found="$d"; break; fi
-          done
-          if [ -z "$found" ]; then
-            echo "no ppu-gcc in this image" > "$GITHUB_STEP_SUMMARY"
-            ls / /opt /usr/local >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
-            exit 1
-          fi
-          echo "PS3DEV=$found" >> "$GITHUB_ENV"
-          [ -f "$found/ppu_rules" ] || {
-            rule=$(find / -name ppu_rules -not -path '/proc/*' 2>/dev/null | head -1)
-            if [ -n "$rule" ]; then cp "$rule" "$found/ppu_rules"; fi
-          }
-
       - name: Port libraries (cairo) if missing
         run: |
-          set +e
           if [ ! -f "$PS3DEV/portlibs/ppu/lib/libcairo.a" ]; then
             git clone --depth 1 https://github.com/ps3dev/ps3libraries /tmp/ps3libraries
             cd /tmp/ps3libraries
             ./libraries.sh 2>&1 | tee /tmp/libraries.log
-            rc=${PIPESTATUS[0]}
-            if [ $rc -ne 0 ]; then
-              echo "### ps3libraries failed (exit $rc). Last lines:" > "$GITHUB_STEP_SUMMARY"
+            if [ ! -f "$PS3DEV/portlibs/ppu/lib/libcairo.a" ]; then
+              echo "### ps3libraries failed. Last lines:" > "$GITHUB_STEP_SUMMARY"
               tail -n 150 /tmp/libraries.log >> "$GITHUB_STEP_SUMMARY"
               exit 1
             fi
@@ -62,11 +42,9 @@ jobs:
         run: |
           export PSL1GHT="$PS3DEV"
           export PATH=$PATH:$PS3DEV/bin:$PS3DEV/ppu/bin:$PS3DEV/spu/bin
-          set +e
           make pkg 2>&1 | tee /tmp/pkg.log
-          rc=${PIPESTATUS[0]}
-          if [ $rc -ne 0 ]; then
-            echo "### make pkg failed (exit $rc). Last lines:" > "$GITHUB_STEP_SUMMARY"
+          if [ ! -f aurora.pkg ]; then
+            echo "### make pkg failed. Last lines:" > "$GITHUB_STEP_SUMMARY"
             tail -n 200 /tmp/pkg.log >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
@@ -78,78 +56,7 @@ jobs:
           name: aurora-pkg
           path: aurora.pkg
 
-  # ---------------- strategy 2: prebuilt image #2 (fast) ----------------
-  try-zeldin:
-    runs-on: ubuntu-latest
-    timeout-minutes: 240
-    container:
-      image: docker.io/zeldin/ps3dev-docker:latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Locate toolchain in image
-        run: |
-          found=""
-          for d in "$PS3DEV" /usr/local/ps3dev /opt/ps3dev /ps3dev /usr/ps3dev /root/ps3dev /home/ps3dev; do
-            if [ -n "$d" ] && [ -x "$d/ppu/bin/ppu-gcc" ]; then found="$d"; break; fi
-          done
-          if [ -z "$found" ]; then
-            echo "no ppu-gcc in this image" > "$GITHUB_STEP_SUMMARY"
-            ls / /opt /usr/local >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
-            exit 1
-          fi
-          echo "PS3DEV=$found" >> "$GITHUB_ENV"
-          [ -f "$found/ppu_rules" ] || {
-            rule=$(find / -name ppu_rules -not -path '/proc/*' 2>/dev/null | head -1)
-            if [ -n "$rule" ]; then cp "$rule" "$found/ppu_rules"; fi
-          }
-
-      - name: Port libraries (cairo) if missing
-        run: |
-          set +e
-          if [ ! -f "$PS3DEV/portlibs/ppu/lib/libcairo.a" ]; then
-            git clone --depth 1 https://github.com/ps3dev/ps3libraries /tmp/ps3libraries
-            cd /tmp/ps3libraries
-            ./libraries.sh 2>&1 | tee /tmp/libraries.log
-            rc=${PIPESTATUS[0]}
-            if [ $rc -ne 0 ]; then
-              echo "### ps3libraries failed (exit $rc). Last lines:" > "$GITHUB_STEP_SUMMARY"
-              tail -n 150 /tmp/libraries.log >> "$GITHUB_STEP_SUMMARY"
-              exit 1
-            fi
-          fi
-
-      - name: Assets (font + icon)
-        run: |
-          mkdir -p usrdir/USRDIR data
-          (apt-get update -y && apt-get install -y fonts-dejavu-core) || true
-          if [ -f /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf ]; then
-            cp /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf usrdir/USRDIR/font.ttf
-          fi
-          python3 scripts/gen_icon.py
-
-      - name: Build package
-        run: |
-          export PSL1GHT="$PS3DEV"
-          export PATH=$PATH:$PS3DEV/bin:$PS3DEV/ppu/bin:$PS3DEV/spu/bin
-          set +e
-          make pkg 2>&1 | tee /tmp/pkg.log
-          rc=${PIPESTATUS[0]}
-          if [ $rc -ne 0 ]; then
-            echo "### make pkg failed (exit $rc). Last lines:" > "$GITHUB_STEP_SUMMARY"
-            tail -n 200 /tmp/pkg.log >> "$GITHUB_STEP_SUMMARY"
-            exit 1
-          fi
-          ls -lh aurora.pkg
-
-      - name: Upload aurora.pkg
-        uses: actions/upload-artifact@v4
-        with:
-          name: aurora-pkg-zeldin
-          path: aurora.pkg
-
-  # ---------------- strategy 3: build toolchain from source (slow, reliable) ----------------
+  # ---------------- slow path: build toolchain from source ----------------
   build-source:
     runs-on: ubuntu-latest
     timeout-minutes: 300
@@ -179,11 +86,9 @@ jobs:
           if [ ! -x "$PS3DEV/ppu/bin/ppu-gcc" ]; then
             git clone --depth 1 https://github.com/ps3dev/ps3toolchain /tmp/ps3toolchain
             cd /tmp/ps3toolchain
-            set +e
             ./toolchain.sh 2>&1 | tee $HOME/toolchain.log
-            rc=${PIPESTATUS[0]}
-            if [ $rc -ne 0 ]; then
-              echo "### ps3toolchain failed (exit $rc). Last lines:" > "$GITHUB_STEP_SUMMARY"
+            if [ ! -x "$PS3DEV/ppu/bin/ppu-gcc" ]; then
+              echo "### ps3toolchain failed. Last lines:" > "$GITHUB_STEP_SUMMARY"
               tail -n 150 $HOME/toolchain.log >> "$GITHUB_STEP_SUMMARY"
               exit 1
             fi
@@ -197,11 +102,9 @@ jobs:
           if [ ! -f "$PS3DEV/portlibs/ppu/lib/libcairo.a" ]; then
             git clone --depth 1 https://github.com/ps3dev/ps3libraries /tmp/ps3libraries
             cd /tmp/ps3libraries
-            set +e
             ./libraries.sh 2>&1 | tee $HOME/libraries.log
-            rc=${PIPESTATUS[0]}
-            if [ $rc -ne 0 ]; then
-              echo "### ps3libraries failed (exit $rc). Last lines:" > "$GITHUB_STEP_SUMMARY"
+            if [ ! -f "$PS3DEV/portlibs/ppu/lib/libcairo.a" ]; then
+              echo "### ps3libraries failed. Last lines:" > "$GITHUB_STEP_SUMMARY"
               tail -n 150 $HOME/libraries.log >> "$GITHUB_STEP_SUMMARY"
               exit 1
             fi
@@ -218,11 +121,9 @@ jobs:
           export PS3DEV=$HOME/ps3dev
           export PSL1GHT=$PS3DEV
           export PATH=$PATH:$PS3DEV/bin:$PS3DEV/ppu/bin:$PS3DEV/spu/bin
-          set +e
           make pkg 2>&1 | tee $HOME/pkg.log
-          rc=${PIPESTATUS[0]}
-          if [ $rc -ne 0 ]; then
-            echo "### make pkg failed (exit $rc). Last lines:" > "$GITHUB_STEP_SUMMARY"
+          if [ ! -f aurora.pkg ]; then
+            echo "### make pkg failed. Last lines:" > "$GITHUB_STEP_SUMMARY"
             tail -n 200 $HOME/pkg.log >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi

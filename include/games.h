@@ -35,8 +35,8 @@ typedef struct
 extern GameEntry g_games[GAMES_MAX];
 extern int g_game_count;
 
-/* scan all configured locations; returns number of games found */
-int games_scan(void);
+/* scan all configured locations; rescans games */
+void games_scan(void);
 
 /* reload the aurora.ini config (also rescanned by scan) */
 void games_config_load(void);

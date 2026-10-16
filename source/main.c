@@ -75,29 +75,69 @@ static volatile s32 dialog_done = 0;
 static void dialog_handler(msgButton button, void *usrData)
 {
 	(void)usrData;
-	switch (button) {
-	case MSG_DIALOG_BTN_NONE:
-		dialog_done = 1;   /* auto-close */
-		break;
-	default:
-		dialog_done = 1;
-		break;
+	(void)button;
+	dialog_done = 1;
+}
+
+/* close a currently visible diag dialog */
+static void diag_close(void)
+{
+	msgDialogAbort();
+	usleep(120000);
+	sysUtilCheckCallback();
+}
+
+/* diagnostic trace dialog: waits for X, then STAYS on screen so that a
+ * later freeze/crash leaves the last message visible. */
+static void diag_stage(const char *msg)
+{
+	if (!running)
+		return;
+	diag_close();
+	dialog_done = 0;
+	msgType type = (msgType)(MSG_DIALOG_NORMAL | MSG_DIALOG_BTN_TYPE_OK |
+	                         MSG_DIALOG_DISABLE_CANCEL_ON);
+	if (msgDialogOpen2(type, msg, dialog_handler, NULL, NULL) != 0)
+		return;
+	while (!dialog_done && running) {
+		sysUtilCheckCallback();
+		usleep(16000);
 	}
 }
 
+/* show a fatal message and stop (dialog stays forever) */
+static void diag_fatal(const char *msg)
+{
+	diag_close();
+	dialog_done = 0;
+	msgType type = (msgType)(MSG_DIALOG_NORMAL | MSG_DIALOG_BTN_TYPE_OK |
+	                         MSG_DIALOG_DISABLE_CANCEL_ON);
+	if (msgDialogOpen2(type, msg, dialog_handler, NULL, NULL) == 0) {
+		while (running) {
+			sysUtilCheckCallback();
+			usleep(16000);
+		}
+	}
+	for (;;)
+		usleep(500000);
+}
+
+/* show an informational dialog (about/details/mount hints) */
 static void show_dialog(const char *text)
 {
+	diag_close();
 	dialog_done = 0;
 	msgType type = (msgType)(MSG_DIALOG_NORMAL | MSG_DIALOG_BTN_TYPE_OK |
 	                         MSG_DIALOG_DISABLE_CANCEL_ON);
 	if (msgDialogOpen2(type, text, dialog_handler, NULL, NULL) != 0)
 		return;
-
 	while (!dialog_done && running) {
 		sysUtilCheckCallback();
-		flip(context, buffers[currentBuffer].id);
+		usleep(16000);
 	}
 	msgDialogAbort();
+	usleep(60000);
+	sysUtilCheckCallback();
 }
 
 /* ------------------------------------------------------------------ */
@@ -226,18 +266,33 @@ int main(int argc, const char *argv[])
 
 	printf("Aurora Coverflow starting...\n");
 
+	char tmpbuf[640];
+
+	diag_stage("[Aurora v1.1-DIAG]\nSTAGE 1: process alive. Press X to continue.");
+
 	/* RSX + video */
 	void *host_addr = memalign(1024 * 1024, HOST_SIZE);
 	if (!host_addr) {
 		printf("memalign failed\n");
-		return 1;
+		diag_fatal("FATAL: memalign failed.");
 	}
 
 	context = initScreen(host_addr, HOST_SIZE);
 	if (!context) {
 		printf("initScreen failed\n");
-		free(host_addr);
-		return 1;
+		diag_fatal("FATAL: RSX/video init failed.");
+	}
+
+	{
+		u16 sw = 0, sh = 0;
+		if (getResolution(&sw, &sh))
+			snprintf(tmpbuf, sizeof(tmpbuf),
+			         "STAGE 1 OK: RSX + video ready (%ux%u).\nPress X to continue.",
+			         (unsigned)sw, (unsigned)sh);
+		else
+			snprintf(tmpbuf, sizeof(tmpbuf),
+			         "STAGE 1 OK: RSX + video ready (resolution unknown).\nPress X to continue.");
+		diag_stage(tmpbuf);
 	}
 
 	ioPadInit(7);
@@ -254,7 +309,7 @@ int main(int argc, const char *argv[])
 	for (int i = 0; i < MAX_BUFFERS; i++) {
 		if (!makeBuffer(&buffers[i], width, height, i)) {
 			printf("makeBuffer failed\n");
-			return 1;
+			diag_fatal("FATAL: display buffer allocation failed.");
 		}
 	}
 	flip(context, MAX_BUFFERS - 1);
@@ -263,12 +318,13 @@ int main(int argc, const char *argv[])
 	FT_Library ft = NULL;
 	FT_Face face = NULL;
 	cairo_font_face_t *fontface = NULL;
+	int font_ok = 0;
 
 	if (FT_Init_FreeType(&ft) == 0) {
 		const char *font = aurora_font_path();
 		printf("font path: %s\n", font);
 		if (FT_New_Face(ft, font, 0, &face) == 0)
-			fontface = cairo_ft_font_face_create_for_ft_face(face, 0);
+			{ fontface = cairo_ft_font_face_create_for_ft_face(face, 0); font_ok = 1; }
 		else
 			printf("FT_New_Face failed, using default fonts\n");
 	}
@@ -276,10 +332,20 @@ int main(int argc, const char *argv[])
 	ui_init(width, height);
 	ui_set_font(fontface);
 
+	snprintf(tmpbuf, sizeof(tmpbuf),
+	         "STAGE 2 OK: buffers + font + UI ready.\nfont.ttf: %s\nPress X to continue.",
+	         font_ok ? "loaded" : "missing (fallback font)");
+	diag_stage(tmpbuf);
+
 	/* load config + scan games */
 	games_config_load();
 	games_scan();
 	printf("found %d games\n", g_game_count);
+
+	snprintf(tmpbuf, sizeof(tmpbuf),
+	         "STAGE 3 OK: scanning done - %d games found.\nPress X to continue.",
+	         g_game_count);
+	diag_stage(tmpbuf);
 
 	int sel = 0;
 	float pos = 0.0f;
@@ -346,11 +412,19 @@ int main(int argc, const char *argv[])
 		if (pos > sel - 0.002f && pos < sel + 0.002f)
 			pos = (float)sel;
 
-		/* ---- covers around selection ---- */
+		/* ---- covers around selection (deferred until after frame 1) ---- */
 		int c = (int)floorf(pos + 0.5f);
-		for (int i = c - 10; i <= c + 10; i++)
-			if (i >= 0 && i < g_game_count)
-				game_cover_get(i);
+		if (frame > 0) {
+			int loaded = 0;
+			for (int i = c - 10; i <= c + 10 && loaded < 2; i++)
+				if (i >= 0 && i < g_game_count) {
+					GameEntry *gg = &g_games[i];
+					if (!gg->surf && !gg->loadfail) {
+						game_cover_get(i);
+						loaded++;
+					}
+				}
+		}
 		games_covers_trim(c, 12);
 
 		/* ---- render ---- */
@@ -371,6 +445,11 @@ int main(int argc, const char *argv[])
 		flip(context, buffers[currentBuffer].id);
 		currentBuffer = (currentBuffer + 1) % MAX_BUFFERS;
 		frame++;
+
+		if (frame == 1) {
+			diag_stage("STAGE 4 OK: first frame drawn.\nPress X to continue (cover loading now enabled).");
+			diag_close();
+		}
 	}
 
 	/* ---- cleanup ---- */

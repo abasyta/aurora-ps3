@@ -15,6 +15,7 @@
 #include <time.h>
 
 #include <ppu-lv2.h>
+#include <sys/process.h>	/* SYS_PROCESS_PARAM */
 
 #include <io/pad.h>
 #include <sysutil/sysutil.h>
@@ -103,17 +104,17 @@ static void show_dialog(const char *text)
 /* input                                                               */
 /* ------------------------------------------------------------------ */
 
-#define BTN_LEFT		PAD_CTRL_LEFT
-#define BTN_RIGHT		PAD_CTRL_RIGHT
-#define BTN_UP			PAD_CTRL_UP
-#define BTN_DOWN		PAD_CTRL_DOWN
-#define BTN_CROSS		PAD_CTRL_CROSS
-#define BTN_CIRCLE		PAD_CTRL_CIRCLE
-#define BTN_SQUARE		PAD_CTRL_SQUARE
-#define BTN_TRIANGLE	PAD_CTRL_TRIANGLE
-#define BTN_START		PAD_CTRL_START
-#define BTN_L1			PAD_CTRL_L1
-#define BTN_R1			PAD_CTRL_R1
+#define K_LEFT			(1 << 0)
+#define K_RIGHT			(1 << 1)
+#define K_UP			(1 << 2)
+#define K_DOWN			(1 << 3)
+#define K_CROSS			(1 << 4)
+#define K_CIRCLE		(1 << 5)
+#define K_SQUARE		(1 << 6)
+#define K_TRIANGLE		(1 << 7)
+#define K_START			(1 << 8)
+#define K_L1			(1 << 9)
+#define K_R1			(1 << 10)
 
 static u16 read_buttons(void)
 {
@@ -131,17 +132,17 @@ static u16 read_buttons(void)
 		if (ioPadGetData(i, &pd) != 0)
 			continue;
 
-		if (pd.BTN_LEFT)     b |= BTN_LEFT;
-		if (pd.BTN_RIGHT)    b |= BTN_RIGHT;
-		if (pd.BTN_UP)       b |= BTN_UP;
-		if (pd.BTN_DOWN)     b |= BTN_DOWN;
-		if (pd.BTN_CROSS)    b |= BTN_CROSS;
-		if (pd.BTN_CIRCLE)   b |= BTN_CIRCLE;
-		if (pd.BTN_SQUARE)   b |= BTN_SQUARE;
-		if (pd.BTN_TRIANGLE) b |= BTN_TRIANGLE;
-		if (pd.BTN_START)    b |= BTN_START;
-		if (pd.BTN_L1)       b |= BTN_L1;
-		if (pd.BTN_R1)       b |= BTN_R1;
+		if (pd.BTN_LEFT)     b |= K_LEFT;
+		if (pd.BTN_RIGHT)    b |= K_RIGHT;
+		if (pd.BTN_UP)       b |= K_UP;
+		if (pd.BTN_DOWN)     b |= K_DOWN;
+		if (pd.BTN_CROSS)    b |= K_CROSS;
+		if (pd.BTN_CIRCLE)   b |= K_CIRCLE;
+		if (pd.BTN_SQUARE)   b |= K_SQUARE;
+		if (pd.BTN_TRIANGLE) b |= K_TRIANGLE;
+		if (pd.BTN_START)    b |= K_START;
+		if (pd.BTN_L1)       b |= K_L1;
+		if (pd.BTN_R1)       b |= K_R1;
 		break;
 	}
 	return b;
@@ -300,21 +301,21 @@ int main(int argc, const char *argv[])
 
 		if (count > 0) {
 			int step = 0;
-			if (pressed & (BTN_LEFT | BTN_UP))
+			if (pressed & (K_LEFT | K_UP))
 				step = -1;
-			if (pressed & (BTN_RIGHT | BTN_DOWN))
+			if (pressed & (K_RIGHT | K_DOWN))
 				step = 1;
-			if (pressed & BTN_L1)
+			if (pressed & K_L1)
 				step = -5;
-			if (pressed & BTN_R1)
+			if (pressed & K_R1)
 				step = 5;
 
 			/* hold-to-repeat for left/right */
-			if (!step && (cur & (BTN_LEFT | BTN_RIGHT))) {
+			if (!step && (cur & (K_LEFT | K_RIGHT))) {
 				repeat_timer++;
 				unsigned period = (repeat_timer > 30) ? 7 : 22;
 				if (repeat_timer > 16 && (repeat_timer % period) == 0)
-					step = (cur & BTN_LEFT) ? -1 : 1;
+					step = (cur & K_LEFT) ? -1 : 1;
 			} else if (step)
 				repeat_timer = 0;
 
@@ -323,19 +324,19 @@ int main(int argc, const char *argv[])
 			}
 		}
 
-		if (pressed & BTN_CROSS)
+		if (pressed & K_CROSS)
 			do_launch(sel);
-		if (pressed & BTN_SQUARE)
+		if (pressed & K_SQUARE)
 			do_details(sel);
-		if (pressed & BTN_CIRCLE)
+		if (pressed & K_CIRCLE)
 			do_about();
-		if (pressed & BTN_TRIANGLE) {
+		if (pressed & K_TRIANGLE) {
 			games_free();
 			games_scan();
 			sel = 0;
 			pos = 0.0f;
 		}
-		if (pressed & BTN_START)
+		if (pressed & K_START)
 			running = 0;
 
 		prev = cur;

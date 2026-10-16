@@ -41,7 +41,7 @@ LDFLAGS		=	$(MACHDEP) -Wl,-Map,$(notdir $@).map
 #---------------------------------------------------------------------------------
 # libraries
 #---------------------------------------------------------------------------------
-LIBS		:=	-lgcm_sys -lrsx -lsysutil -lio -lcairo -lfreetype -lz -lpixman-1 \
+LIBS		:=	-lgcm_sys -lrsx -lsysutil -lio -lsysfs -lcairo -lfreetype -lz -lpixman-1 \
 				-lpngdec -lsysmodule -lrt -llv2 -lm
 
 LIBDIRS		:=	$(PORTLIBS)

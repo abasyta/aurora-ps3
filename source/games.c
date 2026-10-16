@@ -27,7 +27,6 @@ static unsigned int cfg_webman_port = 80;
 static char cfg_font_path[600] = "";
 static char cfg_extra_paths[1024] = "";
 
-static int is_valid_ext(const char *dir, const char *name);
 
 /* ------------------------------------------------------------------ */
 /* file helpers                                                        */
@@ -440,12 +439,12 @@ void games_covers_trim(int center, int keep_dist)
 /* config (aurora.ini)                                                 */
 /* ------------------------------------------------------------------ */
 
-static void ini_get(const unsigned char *buf, unsigned int size,
+static int ini_get(const unsigned char *buf, unsigned int size,
                     const char *key, char *out, unsigned int outn)
 {
 	out[0] = 0;
 	char *copy = malloc(size + 1);
-	if (!copy) return;
+	if (!copy) return 0;
 	memcpy(copy, buf, size);
 	copy[size] = 0;
 
@@ -471,6 +470,7 @@ static void ini_get(const unsigned char *buf, unsigned int size,
 		p = eol + 1;
 	}
 	free(copy);
+	return 0;
 }
 
 void games_config_load(void)

@@ -331,11 +331,12 @@ static cairo_surface_t *png_to_cairo(const char *path)
 	pngData png;
 	memset(&png, 0, sizeof(png));
 	if (pngLoadFromFile(path, &png) != 0 || !png.bmp_out ||
-	    png.width == 0 || png.height == 0)
+	    png.width == 0 || png.height == 0 ||
+	    png.width > 4096 || png.height > 4096)
 		return NULL;
 
 	u32 w = png.width, h = png.height;
-	u32 pitch = png.pitch;
+	u32 pitch = png.pitch ? png.pitch : png.width * 4;
 
 	cairo_surface_t *src = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, w, h);
 	if (!src) {

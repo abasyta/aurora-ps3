@@ -1,77 +1,69 @@
-# Builds aurora.pkg automatically on GitHub's cloud.
-# No local toolchain needed: push the project, download the artifact.
+# Builds aurora.pkg on GitHub's cloud (runs when manually dispatched).
+# Toolchain is cached, so only the first run is slow (1-3h).
 name: Build Aurora PKG
 
 on:
-  push:
   workflow_dispatch:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
-    container:
-      image: ghcr.io/ps3dev/ps3dev-docker:latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Prepare assets (font + icon)
-        run: |
-          apt-get -y update || true
-          apt-get -y install fonts-dejavu-core || true
-          mkdir -p usrdir/USRDIR data
-          if [ -f /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf ]; then
-            cp /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf usrdir/USRDIR/font.ttf
-          else
-            echo "DejaVu font missing - the app will fall back to default fonts"
-          fi
-          python3 scripts/gen_icon.py || echo "icon generation failed (pkg uses default icon)"
-
-      - name: Build port libraries if needed (cairo)
-        run: |
-          if [ ! -f "$PS3DEV/portlibs/ppu/lib/libcairo.a" ]; then
-            echo "cairo not in the image - building ps3libraries (takes a while)..."
-            git clone --depth 1 https://github.com/ps3dev/ps3libraries /tmp/ps3libraries
-            cd /tmp/ps3libraries && ./libraries.sh
-          fi
-
-      - name: Build package
-        run: make pkg
-
-      - name: Upload aurora.pkg
-        uses: actions/upload-artifact@v4
-        with:
-          name: aurora-pkg
-          path: aurora.pkg
-
-  fallback-from-source:
-    needs: build
-    if: failure()
     runs-on: ubuntu-latest
     timeout-minutes: 300
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Toolchain + libraries + build
+      - name: Cache PS3 toolchain
+        uses: actions/cache@v4
+        with:
+          path: ~/ps3dev
+          key: ps3dev-${{ runner.os }}
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get -y update
+          sudo apt-get -y install build-essential autoconf automake bison flex \
+            libelf-dev make texinfo libncurses-dev patch wget zlib1g-dev \
+            libtool libtool-bin bzip2 libgmp-dev pkg-config libssl-dev \
+            git python3 python-is-python3 fonts-dejavu-core
+
+      - name: Toolchain (first run only, 1-3h)
         run: |
           export PS3DEV=$HOME/ps3dev
           export PSL1GHT=$PS3DEV
           export PATH=$PATH:$PS3DEV/bin:$PS3DEV/ppu/bin:$PS3DEV/spu/bin
-          sudo apt-get -y update
-          sudo apt-get -y install build-essential autoconf automake bison flex \
-            libelf-dev make texinfo libncurses5-dev patch wget zlib1g-dev \
-            libtool libtool-bin bzip2 libgmp3-dev pkg-config libssl-dev \
-            clang git python3 python-is-python3 fonts-dejavu-core
-          git clone --depth 1 https://github.com/ps3dev/ps3toolchain $HOME/ps3toolchain
-          cd $HOME/ps3toolchain && ./toolchain.sh
-          git clone --depth 1 https://github.com/ps3dev/ps3libraries $HOME/ps3libraries
-          cd $HOME/ps3libraries && ./libraries.sh
-          cd $GITHUB_WORKSPACE
+          if [ ! -x "$PS3DEV/ppu/bin/ppu-gcc" ]; then
+            git clone --depth 1 https://github.com/ps3dev/ps3toolchain $HOME/ps3toolchain
+            cd $HOME/ps3toolchain && ./toolchain.sh
+          else
+            echo "toolchain restored from cache"
+          fi
+
+      - name: Port libraries (cairo + freetype + pixman)
+        run: |
+          export PS3DEV=$HOME/ps3dev
+          export PSL1GHT=$PS3DEV
+          export PATH=$PATH:$PS3DEV/bin:$PS3DEV/ppu/bin:$PS3DEV/spu/bin
+          if [ ! -f "$PS3DEV/portlibs/ppu/lib/libcairo.a" ]; then
+            git clone --depth 1 https://github.com/ps3dev/ps3libraries $HOME/ps3libraries
+            cd $HOME/ps3libraries && ./libraries.sh
+          else
+            echo "ps3libraries restored from cache"
+          fi
+
+      - name: Assets (font + icon)
+        run: |
           mkdir -p usrdir/USRDIR data
           cp /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf usrdir/USRDIR/font.ttf
           python3 scripts/gen_icon.py
+
+      - name: Build package
+        run: |
+          export PS3DEV=$HOME/ps3dev
+          export PSL1GHT=$PS3DEV
+          export PATH=$PATH:$PS3DEV/bin:$PS3DEV/ppu/bin:$PS3DEV/spu/bin
           make pkg
+          ls -lh aurora.pkg
 
       - name: Upload aurora.pkg
         uses: actions/upload-artifact@v4

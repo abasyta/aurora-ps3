@@ -29,36 +29,16 @@ static int tcp_get(int port, const char *request, char *out, int outsz)
 	if (s < 0)
 		return -1;
 
-	/* non-blocking connect with timeout */
-	int fl = fcntl(s, F_GETFL, 0);
-	fcntl(s, F_SETFL, fl | O_NONBLOCK);
-
 	struct sockaddr_in sa;
 	memset(&sa, 0, sizeof(sa));
 	sa.sin_family = AF_INET;
 	sa.sin_port = htons(port);
 	sa.sin_addr.s_addr = htonl(0x7F000001); /* 127.0.0.1 */
 
-	int rc = connect(s, (struct sockaddr *)&sa, sizeof(sa));
-	if (rc < 0 && errno != EINPROGRESS) {
+	if (connect(s, (struct sockaddr *)&sa, sizeof(sa)) < 0) {
 		close(s);
 		return -1;
 	}
-	if (rc < 0) {
-		fd_set wset;
-		FD_ZERO(&wset);
-		FD_SET(s, &wset);
-		struct timeval tv = { 0, 700000 };
-		if (select(s + 1, NULL, &wset, NULL, &tv) <= 0) {
-			close(s);
-			return -1;
-		}
-	}
-
-	/* back to blocking mode with a read timeout */
-	fcntl(s, F_SETFL, fl);
-	struct timeval rtv = { 0, 2000000 };
-	setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &rtv, sizeof(rtv));
 
 	if (send(s, request, strlen(request), 0) < 0) {
 		close(s);
